@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolaccess"
-version = "0.1.0"
+version = "0.1.1"
 description = "Make your custom tools accessible across multiple protocols, including MCP, REST and CLI."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,6 +15,10 @@ dependencies = [
     "typer",
     "uvicorn",
 ]
+
+[project.urls]
+Homepage = "https://github.com/whogben/toolaccess"
+Repository = "https://github.com/whogben/toolaccess"
 
 [project.optional-dependencies]
 dev = [
