@@ -1,0 +1,7 @@
+fastapi
+fastmcp
+pydantic
+pytest
+pytest-asyncio
+typer
+uvicorn
