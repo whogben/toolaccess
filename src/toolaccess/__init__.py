@@ -4,7 +4,7 @@ from .toolaccess import (
     ToolService,
     ToolDefinition,
     OpenAPIServer,
-    SSEMCPServer,
+    StreamableHTTPMCPServer,
     CLIServer,
     MountableApp,
 )
@@ -15,7 +15,7 @@ __all__ = [
     "ToolService",
     "ToolDefinition",
     "OpenAPIServer",
-    "SSEMCPServer",
+    "StreamableHTTPMCPServer",
     "CLIServer",
     "MountableApp",
 ]

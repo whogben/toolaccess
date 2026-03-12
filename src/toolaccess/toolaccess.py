@@ -17,7 +17,7 @@ from starlette.responses import Response
 """
 Generic Tool Server Utility (Polymorphic Server Model)
 Provides reusable components for exposing Python functions as tools via
-CLI, OpenAPI (REST), and MCP (SSE/Stdio).
+CLI, OpenAPI (REST), and MCP (StreamableHTTP/Stdio).
 """
 
 logger = logging.getLogger(__name__)
@@ -103,8 +103,8 @@ class OpenAPIServer(BaseServer):
         pass
 
 
-class SSEMCPServer(BaseServer):
-    """Exposes tools via FastMCP (SSE & Stdio capability)."""
+class StreamableHTTPMCPServer(BaseServer):
+    """Exposes tools via FastMCP (StreamableHTTP & Stdio capability)."""
 
     def __init__(self, name: str = "default"):
         self.name = name
@@ -214,7 +214,7 @@ class DynamicDispatcher:
                     if not remaining or remaining.startswith("/"):
                         matches.append((server, len(check_prefix)))
 
-            elif isinstance(server, SSEMCPServer):
+            elif isinstance(server, StreamableHTTPMCPServer):
                 prefix = f"/mcp/{server.name}"
                 if path.startswith(prefix):
                     remaining = path[len(prefix) :]
@@ -250,11 +250,17 @@ class DynamicDispatcher:
             scope["path"] = path[prefix_len:] or "/"
             await server.app(scope, receive, send)
 
-        elif isinstance(server, SSEMCPServer):
+        elif isinstance(server, StreamableHTTPMCPServer):
             prefix = f"/mcp/{server.name}"
             scope["root_path"] = scope.get("root_path", "") + prefix
-            scope["path"] = path[prefix_len:] or "/"
-            await server.mcp.http_app(transport="sse")(scope, receive, send)
+            # FastMCP StreamableHTTP expects path to be /mcp (the streamable_http_path)
+            remaining = path[prefix_len:]
+            scope["path"] = remaining if remaining else "/mcp"
+            # Create http app and disable redirect_slashes to prevent
+            # redirects to paths outside our prefix
+            http_app = server.mcp.http_app(transport="streamable-http")
+            http_app.redirect_slashes = False
+            await http_app(scope, receive, send)
 
         elif isinstance(server, MountableApp):
             prefix = server.path_prefix.strip("/")
@@ -292,7 +298,10 @@ class ServerManager:
         server_id = str(id(server))
         if server_id in self.active_servers:
             del self.active_servers[server_id]
-            if isinstance(server, SSEMCPServer) and server.name in self.mcp_servers:
+            if (
+                isinstance(server, StreamableHTTPMCPServer)
+                and server.name in self.mcp_servers
+            ):
                 del self.mcp_servers[server.name]
 
     def _add_infrastructure(self):
@@ -303,12 +312,12 @@ class ServerManager:
 
         @self.cli.command()
         def start(host: str = "127.0.0.1", port: int = 8000):
-            """Start the server (REST + MCP SSE)."""
+            """Start the server (REST + MCP StreamableHTTP)."""
             print(f"🚀 {self.name} Server Starting...")
             print(f"---------------------------------------------------")
             print(f"📋 OpenAPI:           http://{host}:{port}/docs")
             for mcp_name in self.mcp_servers:
-                print(f"🤖 MCP Server:        http://{host}:{port}/mcp/{mcp_name}/sse")
+                print(f"🤖 MCP Server:        http://{host}:{port}/mcp/{mcp_name}/mcp")
 
             # Print URLs for MountableApps
             for server in self.active_servers.values():

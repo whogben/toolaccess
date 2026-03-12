@@ -32,7 +32,7 @@ from toolaccess import (
     ToolService,
     ToolDefinition,
     OpenAPIServer,
-    SSEMCPServer,
+    StreamableHTTPMCPServer,
     CLIServer,
 )
 
@@ -52,7 +52,7 @@ service = ToolService("math", [add, greet])
 rest = OpenAPIServer(path_prefix="/api", title="Math API")
 rest.mount(service)
 
-mcp = SSEMCPServer("math")
+mcp = StreamableHTTPMCPServer("math")
 mcp.mount(service)
 
 cli = CLIServer("math")
@@ -74,7 +74,7 @@ That single file gives you:
 |---|---|
 | REST API | `POST /api/add`, `POST /api/greet` |
 | OpenAPI docs | `GET /api/docs` |
-| MCP (SSE) | `http://localhost:8000/mcp/math/sse` |
+| MCP (StreamableHTTP) | `http://localhost:8000/mcp/math/mcp` |
 | MCP (stdio) | `python app.py mcp-run --name math` |
 | CLI | `python app.py math add 1 2` |
 | Health check | `GET /health` |
@@ -117,7 +117,7 @@ service = ToolService("admin", [check_health, restart_worker])
 | Class | Protocol | Notes |
 |---|---|---|
 | `OpenAPIServer` | HTTP / REST | Backed by FastAPI. Set `path_prefix` to namespace routes. |
-| `SSEMCPServer` | MCP (SSE + stdio) | Backed by FastMCP. Mounted at `/mcp/{name}/sse`. |
+| `StreamableHTTPMCPServer` | MCP (StreamableHTTP + stdio) | Backed by FastMCP. Mounted at `/mcp/{name}/mcp`. |
 | `CLIServer` | CLI | Backed by Typer. Async functions are handled automatically. |
 
 ### ServerManager
@@ -146,7 +146,7 @@ manager.add_server(public_api)
 manager.add_server(admin_api)
 ```
 
-The same pattern works for MCP — create multiple `SSEMCPServer` instances with different names.
+The same pattern works for MCP — create multiple `StreamableHTTPMCPServer` instances with different names.
 
 ## Lifespan support
 

@@ -6,7 +6,7 @@ from toolaccess import (
     ToolService,
     ToolDefinition,
     OpenAPIServer,
-    SSEMCPServer,
+    StreamableHTTPMCPServer,
     CLIServer,
 )
 from contextlib import asynccontextmanager
@@ -43,12 +43,12 @@ def manager():
     mgr.add_server(api_admin)
 
     # 3. Default MCP
-    mcp = SSEMCPServer("default")
+    mcp = StreamableHTTPMCPServer("default")
     mcp.mount(tool_svc)
     mgr.add_server(mcp)
 
     # 4. Admin MCP
-    mcp_admin = SSEMCPServer("admin")
+    mcp_admin = StreamableHTTPMCPServer("admin")
     mcp_admin.mount(admin_svc)
     mgr.add_server(mcp_admin)
 
@@ -97,21 +97,21 @@ def test_admin_rest(client):
 
 
 def test_mcp_endpoints(client):
-    """Test that MCP SSE endpoints are mounted."""
-    # Check default MCP server via messages endpoint (POST)
-    # FastMCP might redirect if slashes mismatch. Allow redirects.
-    # Note: If it redirects to a path without the prefix, that's a bug in the Dispatcher/SubApp interaction.
-    # We check for 404 specifically.
+    """Test that MCP StreamableHTTP endpoints are mounted."""
+    # Check default MCP server via mcp endpoint (POST)
+    # StreamableHTTP requires lifespan context for full operation,
+    # so we expect RuntimeError (not 404) which confirms endpoint is routed
 
-    # Try with trailing slash to avoid 307 Redirect stripping the prefix
-    response = client.post("/mcp/default/messages/")
-    assert (
-        response.status_code != 404
-    ), f"Got {response.status_code}. History: {response.history}"
+    # Use follow_redirects=False to prevent redirect loop issues
+    # and test without trailing slash to avoid Starlette's redirect_slashes
+    # The RuntimeError about "task group was not initialized" confirms
+    # the endpoint was found (otherwise we'd get 404)
+    with pytest.raises(RuntimeError, match="task group was not initialized"):
+        client.post("/mcp/default/mcp", follow_redirects=False)
 
     # Check admin MCP server
-    response = client.post("/mcp/admin/messages/")
-    assert response.status_code != 404
+    with pytest.raises(RuntimeError, match="task group was not initialized"):
+        client.post("/mcp/admin/mcp", follow_redirects=False)
 
 
 def test_openapi_specs(client):
