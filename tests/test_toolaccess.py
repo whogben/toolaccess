@@ -1,13 +1,16 @@
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 from toolaccess import (
-    ServerManager,
-    ToolService,
-    ToolDefinition,
-    OpenAPIServer,
-    StreamableHTTPMCPServer,
     CLIServer,
+    MountableApp,
+    OpenAPIServer,
+    ServerManager,
+    StreamableHTTPMCPServer,
+    SurfaceSpec,
+    ToolDefinition,
+    ToolService,
 )
 from contextlib import asynccontextmanager
 
@@ -26,10 +29,26 @@ def dummy_admin():
 def manager():
     mgr = ServerManager(name="test_service")
 
-    # Services
-    tool_svc = ToolService("tools", [ToolDefinition(dummy_tool, "add_dummy", "POST")])
+    # Services - using decorator API with surfaces dict
+    tool_svc = ToolService(
+        "tools",
+        [
+            ToolDefinition(
+                dummy_tool,
+                "add_dummy",
+                surfaces={"rest": SurfaceSpec(http_method="POST")},
+            )
+        ],
+    )
     admin_svc = ToolService(
-        "admin", [ToolDefinition(dummy_admin, "check_admin", "GET")]
+        "admin",
+        [
+            ToolDefinition(
+                dummy_admin,
+                "check_admin",
+                surfaces={"rest": SurfaceSpec(http_method="GET")},
+            )
+        ],
     )
 
     # 1. API v1
@@ -153,7 +172,14 @@ def test_async_cli_execution(runner):
         return x * 2
 
     # Service
-    svc = ToolService("svc", [ToolDefinition(async_tool, "double", "POST")])
+    svc = ToolService(
+        "svc",
+        [
+            ToolDefinition(
+                async_tool, "double", surfaces={"rest": SurfaceSpec(http_method="POST")}
+            )
+        ],
+    )
 
     # Server
     cli = CLIServer("math")
@@ -179,7 +205,16 @@ def test_lifespan_integration(runner):
     async def simple_tool():
         return "ok"
 
-    svc = ToolService("svc", [ToolDefinition(simple_tool, "simple_tool", "POST")])
+    svc = ToolService(
+        "svc",
+        [
+            ToolDefinition(
+                simple_tool,
+                "simple_tool",
+                surfaces={"rest": SurfaceSpec(http_method="POST")},
+            )
+        ],
+    )
     cli = CLIServer("tools")
     cli.mount(svc)
     mgr.add_server(cli)
@@ -209,7 +244,14 @@ def test_dynamic_server_lifecycle_explicit():
     # 2. Add Server
     dynamic_api = OpenAPIServer("/dynamic", "Dynamic API")
     dynamic_svc = ToolService(
-        "dynamic", [ToolDefinition(dummy_tool, "add_dynamic", "POST")]
+        "dynamic",
+        [
+            ToolDefinition(
+                dummy_tool,
+                "add_dynamic",
+                surfaces={"rest": SurfaceSpec(http_method="POST")},
+            )
+        ],
     )
     dynamic_api.mount(dynamic_svc)
 
@@ -230,3 +272,26 @@ def test_dynamic_server_lifecycle_explicit():
     # 5. Verify 404 again
     response = client.get("/dynamic/openapi.json")
     assert response.status_code == 404
+
+
+def test_mountable_app_routing():
+    """Verify that MountableApp receives requests via DynamicDispatcher."""
+    mgr = ServerManager("mountable_test")
+
+    dashboard = FastAPI()
+
+    @dashboard.get("/")
+    async def index():
+        return {"page": "dashboard"}
+
+    mgr.add_server(MountableApp(dashboard, path_prefix="/dashboard", name="dashboard"))
+    client = TestClient(mgr.app)
+
+    # Requests under the prefix should be routed to the mounted app
+    response = client.get("/dashboard")
+    assert response.status_code == 200
+    assert response.json() == {"page": "dashboard"}
+
+    response = client.get("/dashboard/")
+    assert response.status_code == 200
+    assert response.json() == {"page": "dashboard"}
