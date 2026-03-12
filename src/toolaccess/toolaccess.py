@@ -2,8 +2,9 @@ import inspect
 import asyncio
 import json
 import logging
+import types
 from functools import wraps
-from typing import Any, Callable, Literal, Union, get_origin, get_args
+from typing import Any, Callable, Union, get_origin, get_args
 
 import typer
 import uvicorn
@@ -14,10 +15,14 @@ from starlette.types import Scope, Receive, Send
 from starlette.responses import Response
 
 # Context, definition, pipeline and renderer imports
-from .context import Surface, InvocationContext, Principal, PrincipalResolver
-from .definition import ToolDefinition, get_context_param, InjectContext, inject_context
+from .context import InvocationContext, Principal, PrincipalResolver
+from .definition import (
+    ToolDefinition,
+    get_cli_signature,
+    get_public_signature,
+)
 from .pipeline import invoke_tool
-from .renderers import ResultRenderer, noop_renderer, PydanticJsonRenderer
+from .renderers import ResultRenderer, PydanticJsonRenderer
 
 """
 Generic Tool Server Utility (Polymorphic Server Model)
@@ -154,9 +159,10 @@ class OpenAPIServer(BaseServer):
         http_method = surface_spec.http_method or "POST"
         router = METHOD_ROUTERS.get(http_method, FastAPI.post)
 
-        context_param = get_context_param(tool.func)
         original_func = tool.func
-        original_sig = inspect.signature(original_func)
+        public_sig, public_annotations, context_param = get_public_signature(
+            original_func
+        )
 
         # Build new signature with request parameter for FastAPI injection
         request_param = inspect.Parameter(
@@ -165,9 +171,9 @@ class OpenAPIServer(BaseServer):
             default=inspect.Parameter.empty,
             annotation=Request,
         )
-        new_params = list(original_sig.parameters.values()) + [request_param]
-        new_sig = original_sig.replace(parameters=new_params)
-        new_annotations = dict(getattr(original_func, "__annotations__", {}))
+        new_params = list(public_sig.parameters.values()) + [request_param]
+        new_sig = public_sig.replace(parameters=new_params)
+        new_annotations = dict(public_annotations)
         new_annotations["request"] = Request
 
         if inspect.iscoroutinefunction(original_func):
@@ -267,8 +273,9 @@ class StreamableHTTPMCPServer(BaseServer):
 
     def _wrap_for_mcp(self, tool: ToolDefinition) -> Callable:
         original_func = tool.func
-        sig = inspect.signature(original_func)
-        context_param = get_context_param(original_func)
+        public_sig, public_annotations, context_param = get_public_signature(
+            original_func
+        )
 
         def process_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
             new_kwargs = {}
@@ -277,7 +284,7 @@ class StreamableHTTPMCPServer(BaseServer):
                     new_kwargs[k] = v
                     continue
 
-                param = sig.parameters.get(k)
+                param = public_sig.parameters.get(k)
                 should_skip = False
 
                 if param:
@@ -286,7 +293,7 @@ class StreamableHTTPMCPServer(BaseServer):
                         should_skip = True
                     else:
                         origin = get_origin(annotation)
-                        if origin is Union:
+                        if origin in (Union, types.UnionType):
                             args = get_args(annotation)
                             non_none = [a for a in args if a is not type(None)]
                             if len(non_none) == 1 and non_none[0] is str:
@@ -316,10 +323,8 @@ class StreamableHTTPMCPServer(BaseServer):
                     surface_resolver=self.principal_resolver,
                 )
 
-            async_wrapper.__signature__ = sig
-            async_wrapper.__annotations__ = getattr(
-                original_func, "__annotations__", {}
-            )
+            async_wrapper.__signature__ = public_sig
+            async_wrapper.__annotations__ = public_annotations
             return async_wrapper
         else:
 
@@ -337,8 +342,8 @@ class StreamableHTTPMCPServer(BaseServer):
                     )
                 )
 
-            sync_wrapper.__signature__ = sig
-            sync_wrapper.__annotations__ = getattr(original_func, "__annotations__", {})
+            sync_wrapper.__signature__ = public_sig
+            sync_wrapper.__annotations__ = public_annotations
             return sync_wrapper
 
     def register_to(self, manager: "ServerManager"):
@@ -370,9 +375,8 @@ class CLIServer(BaseServer):
             self._add_command(self.typer_app, tool)
 
     def _add_command(self, app: typer.Typer, tool: ToolDefinition):
-        context_param = get_context_param(tool.func)
         original_func = tool.func
-        sig = inspect.signature(original_func)
+        cli_sig, cli_annotations, context_param = get_cli_signature(original_func)
 
         async def _run_tool(kwargs: dict) -> Any:
             ctx = InvocationContext(
@@ -415,8 +419,8 @@ class CLIServer(BaseServer):
             except KeyboardInterrupt:
                 return None
 
-        cli_wrapper.__signature__ = sig
-        cli_wrapper.__annotations__ = getattr(original_func, "__annotations__", {})
+        cli_wrapper.__signature__ = cli_sig
+        cli_wrapper.__annotations__ = cli_annotations
         app.command(name=tool.name, help=tool.description)(cli_wrapper)
 
     def register_to(self, manager: "ServerManager"):

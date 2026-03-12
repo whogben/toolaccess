@@ -22,6 +22,7 @@ from .context import (
 from .definition import (
     ToolDefinition,
     get_context_param,
+    get_public_signature,
     InjectContext,
     inject_context,
     get_surface_spec,
@@ -55,6 +56,7 @@ __all__ = [
     # Definition
     "ToolDefinition",
     "get_context_param",
+    "get_public_signature",
     "InjectContext",
     "inject_context",
     "get_surface_spec",

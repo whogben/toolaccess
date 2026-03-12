@@ -1,6 +1,7 @@
 """Comprehensive tests for ToolAccess features."""
 
 import base64
+import inspect
 import json
 from dataclasses import dataclass
 from typing import Annotated
@@ -27,6 +28,7 @@ from toolaccess import (
     ToolDefinition,
     ToolService,
     get_context_param,
+    get_public_signature,
     inject_context,
     invoke_tool,
 )
@@ -1074,11 +1076,27 @@ class TestToolWithRenderer:
         assert "status" in response.text and "ok" in response.text
 
 
+class TestPublicSignatureHelpers:
+    def test_get_public_signature_omits_injected_context(self):
+        def describe(
+            name: str,
+            ctx: Annotated[InvocationContext, InjectContext()] = None,
+        ) -> str:
+            return name
+
+        public_sig, public_annotations, context_param = get_public_signature(describe)
+
+        assert context_param == "ctx"
+        assert list(public_sig.parameters) == ["name"]
+        assert "ctx" not in public_annotations
+        assert public_annotations["name"] is str
+        assert public_annotations["return"] is str
+
+
 class TestRestServerWithContextInjection:
     def test_context_injected_to_handler(self):
         mgr = ServerManager("test")
 
-        # Note: ctx parameter needs default=None for FastAPI to not validate it as request param
         def get_surface(ctx: InvocationContext = None) -> str:
             return ctx.surface if ctx else "no_context"
 
@@ -1093,8 +1111,7 @@ class TestRestServerWithContextInjection:
         client = TestClient(mgr.app)
         response = client.post("/api/get_surface")
         assert response.status_code == 200
-        # Without proper context injection setup via get_context_param, ctx is None
-        # The pipeline injects context via invoke_tool when context_param_name is provided
+        assert response.json() == "rest"
 
     def test_context_with_annotated_injection(self):
         mgr = ServerManager("test")
@@ -1115,6 +1132,26 @@ class TestRestServerWithContextInjection:
         client = TestClient(mgr.app)
         response = client.post("/api/get_surface")
         assert response.status_code == 200
+        assert response.json() == "rest"
+
+    def test_openapi_schema_omits_context_param(self):
+        mgr = ServerManager("test")
+
+        def greet(name: str, ctx: InvocationContext = None) -> str:
+            return f"{name}:{ctx.surface if ctx else 'missing'}"
+
+        svc = ToolService("tools", [ToolDefinition(func=greet, name="greet")])
+        api = OpenAPIServer("/api", "API")
+        api.mount(svc)
+        mgr.add_server(api)
+
+        client = TestClient(mgr.app)
+        spec = client.get("/api/openapi.json").json()
+        operation = spec["paths"]["/greet"]["post"]
+        parameter_names = [param["name"] for param in operation.get("parameters", [])]
+
+        assert parameter_names == ["name"]
+        assert "ctx" not in parameter_names
 
 
 class TestCliServerWithRenderer:
@@ -1182,6 +1219,70 @@ class TestCliServerWithRenderer:
         assert result.exit_code == 0
         # CLI uses PydanticJsonRenderer by default
         assert '"status": "executed"' in result.output
+
+    def test_cli_context_injection_uses_hidden_param(self, runner):
+        mgr = ServerManager("test")
+
+        def describe(name: str, ctx: InvocationContext = None) -> str:
+            return f"{name}:{ctx.surface if ctx else 'missing'}"
+
+        svc = ToolService(
+            "tools",
+            [ToolDefinition(func=describe, name="describe")],
+        )
+
+        cli = CLIServer("tools")
+        cli.mount(svc)
+        mgr.add_server(cli)
+
+        result = runner.invoke(mgr.cli, ["tools", "describe", "alice"])
+        assert result.exit_code == 0
+        assert "alice:cli" in result.output
+
+    def test_cli_uses_typer_safe_signature_for_codec_backed_types(self, runner):
+        mgr = ServerManager("test")
+
+        def process(data: dict[str, object]) -> list[str]:
+            return sorted(data.keys())
+
+        svc = ToolService(
+            "tools",
+            [
+                ToolDefinition(
+                    func=process,
+                    name="process",
+                    codecs={"data": JsonObjectCodec()},
+                )
+            ],
+        )
+
+        cli = CLIServer("tools")
+        cli.mount(svc)
+        mgr.add_server(cli)
+
+        command_callback = cli.typer_app.registered_commands[0].callback
+        command_sig = inspect.signature(command_callback)
+        assert command_sig.parameters["data"].annotation is str
+
+        result = runner.invoke(mgr.cli, ["tools", "process", '{"beta": 2, "alpha": 1}'])
+        assert result.exit_code == 0
+        assert json.loads(result.output.strip()) == ["alpha", "beta"]
+
+
+class TestMcpServerWithPublicSignatures:
+    def test_mcp_wrapper_omits_context_param_from_signature(self):
+        def describe(name: str, ctx: InvocationContext = None) -> str:
+            return f"{name}:{ctx.surface if ctx else 'missing'}"
+
+        tool = ToolDefinition(func=describe, name="describe")
+        mcp = StreamableHTTPMCPServer("tools")
+
+        wrapped = mcp._wrap_for_mcp(tool)
+        wrapped_sig = inspect.signature(wrapped)
+
+        assert list(wrapped_sig.parameters) == ["name"]
+        assert "ctx" not in wrapped.__annotations__
+        assert wrapped(name="alice") == "alice:mcp"
 
 
 # =============================================================================

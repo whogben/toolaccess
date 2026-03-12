@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import inspect
+import types
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Callable, get_args, get_origin, get_type_hints
+from enum import Enum
+from pathlib import Path
+from typing import Annotated, Any, Callable, Union, get_args, get_origin, get_type_hints
 
 from .codecs import ArgumentCodec
 from .context import (
@@ -62,6 +65,94 @@ def get_context_param(func: Callable) -> str | None:
             return param_name
 
     return None
+
+
+def get_public_signature(
+    func: Callable,
+) -> tuple[inspect.Signature, dict[str, Any], str | None]:
+    """Return the externally visible signature for a tool function.
+
+    The public signature omits any injected InvocationContext parameter so
+    framework-level registration uses only user-supplied arguments.
+    """
+
+    sig = inspect.signature(func)
+    context_param_name = get_context_param(func)
+    public_params = [
+        param
+        for param in sig.parameters.values()
+        if param.name != context_param_name
+    ]
+    public_sig = sig.replace(parameters=public_params)
+    public_annotations = {
+        key: value
+        for key, value in getattr(func, "__annotations__", {}).items()
+        if key != context_param_name
+    }
+    return public_sig, public_annotations, context_param_name
+
+
+def get_cli_signature(
+    func: Callable,
+) -> tuple[inspect.Signature, dict[str, Any], str | None]:
+    """Return a Typer-safe signature for CLI registration."""
+
+    public_sig, public_annotations, context_param_name = get_public_signature(func)
+    cli_params = []
+    cli_annotations: dict[str, Any] = {}
+
+    for param in public_sig.parameters.values():
+        cli_annotation = _to_cli_safe_annotation(param.annotation)
+        cli_params.append(param.replace(annotation=cli_annotation))
+        if cli_annotation is not inspect.Parameter.empty:
+            cli_annotations[param.name] = cli_annotation
+
+    if "return" in public_annotations:
+        cli_annotations["return"] = public_annotations["return"]
+
+    return public_sig.replace(parameters=cli_params), cli_annotations, context_param_name
+
+
+def _to_cli_safe_annotation(annotation: Any) -> Any:
+    annotation = _strip_annotated(annotation)
+    if annotation is inspect.Parameter.empty:
+        return annotation
+    if _is_typer_safe_annotation(annotation):
+        return annotation
+    if _is_optional_annotation(annotation):
+        return str | None
+    return str
+
+
+def _is_typer_safe_annotation(annotation: Any) -> bool:
+    base_annotation = _strip_annotated(annotation)
+    if _is_optional_annotation(base_annotation):
+        base_annotation = _get_optional_inner_annotation(base_annotation)
+
+    if base_annotation in {str, int, float, bool, Path}:
+        return True
+
+    return inspect.isclass(base_annotation) and issubclass(base_annotation, Enum)
+
+
+def _is_optional_annotation(annotation: Any) -> bool:
+    annotation = _strip_annotated(annotation)
+    origin = get_origin(annotation)
+    if origin not in (Union, types.UnionType):
+        return False
+    args = get_args(annotation)
+    return len(args) == 2 and type(None) in args
+
+
+def _get_optional_inner_annotation(annotation: Any) -> Any:
+    annotation = _strip_annotated(annotation)
+    return next(arg for arg in get_args(annotation) if arg is not type(None))
+
+
+def _strip_annotated(annotation: Any) -> Any:
+    if get_origin(annotation) is Annotated:
+        return get_args(annotation)[0]
+    return annotation
 
 
 @dataclass
