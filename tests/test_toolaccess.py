@@ -115,22 +115,59 @@ def test_admin_rest(client):
     assert response.json() == {"status": "admin_ok"}
 
 
-def test_mcp_endpoints(client):
+def test_mcp_endpoints(manager):
     """Test that MCP StreamableHTTP endpoints are mounted."""
-    # Check default MCP server via mcp endpoint (POST)
-    # StreamableHTTP requires lifespan context for full operation,
-    # so we expect RuntimeError (not 404) which confirms endpoint is routed
+    with TestClient(manager.app) as managed_client:
+        default_post = managed_client.post("/mcp/default/mcp", follow_redirects=False)
+        default_get = managed_client.get("/mcp/default/mcp", follow_redirects=False)
+        admin_post = managed_client.post("/mcp/admin/mcp", follow_redirects=False)
 
-    # Use follow_redirects=False to prevent redirect loop issues
-    # and test without trailing slash to avoid Starlette's redirect_slashes
-    # The RuntimeError about "task group was not initialized" confirms
-    # the endpoint was found (otherwise we'd get 404)
-    with pytest.raises(RuntimeError, match="task group was not initialized"):
-        client.post("/mcp/default/mcp", follow_redirects=False)
+    assert default_post.status_code < 500
+    assert default_post.status_code != 404
+    assert default_get.status_code < 500
+    assert default_get.status_code != 404
+    assert admin_post.status_code < 500
+    assert admin_post.status_code != 404
 
-    # Check admin MCP server
-    with pytest.raises(RuntimeError, match="task group was not initialized"):
-        client.post("/mcp/admin/mcp", follow_redirects=False)
+
+def test_mcp_http_app_is_cached_and_reused():
+    """Test that the FastMCP HTTP app is created once and reused."""
+    mgr = ServerManager("mcp_cache_test")
+    svc = ToolService(
+        "tools",
+        [
+            ToolDefinition(
+                dummy_tool,
+                "add_dummy",
+                surfaces={"rest": SurfaceSpec(http_method="POST")},
+            )
+        ],
+    )
+    mcp = StreamableHTTPMCPServer("default")
+    mcp.mount(svc)
+
+    call_count = 0
+    original_http_app = mcp.mcp.http_app
+
+    def counting_http_app(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original_http_app(*args, **kwargs)
+
+    mcp.mcp.http_app = counting_http_app
+    mgr.add_server(mcp)
+
+    first_app = mcp.get_http_app()
+    second_app = mcp.get_http_app()
+    assert first_app is second_app
+
+    with TestClient(mgr.app) as managed_client:
+        response_one = managed_client.post("/mcp/default/mcp", follow_redirects=False)
+        response_two = managed_client.get("/mcp/default/mcp", follow_redirects=False)
+
+    assert response_one.status_code < 500
+    assert response_two.status_code < 500
+    assert call_count == 1
 
 
 def test_openapi_specs(client):

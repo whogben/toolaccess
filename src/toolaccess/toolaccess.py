@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import types
+from contextlib import AsyncExitStack, asynccontextmanager
 from functools import wraps
 from typing import Any, Callable, Union, get_origin, get_args
 
@@ -260,6 +261,7 @@ class StreamableHTTPMCPServer(BaseServer):
         super().__init__(principal_resolver)
         self.name = name
         self.mcp = FastMCP(name)
+        self._http_app = None
 
     def mount(self, service: ToolService):
         from .definition import get_surface_spec
@@ -348,6 +350,20 @@ class StreamableHTTPMCPServer(BaseServer):
 
     def register_to(self, manager: "ServerManager"):
         manager.mcp_servers[self.name] = self.mcp
+
+    def get_http_app(self):
+        """Create the FastMCP Streamable HTTP app once and reuse it."""
+        if self._http_app is None:
+            self._http_app = self.mcp.http_app(transport="streamable-http")
+            self._http_app.redirect_slashes = False
+        return self._http_app
+
+    @asynccontextmanager
+    async def http_app_lifespan(self):
+        """Run the cached FastMCP HTTP app lifespan for the manager lifetime."""
+        http_app = self.get_http_app()
+        async with http_app.router.lifespan_context(http_app):
+            yield
 
 
 class CLIServer(BaseServer):
@@ -521,8 +537,7 @@ class DynamicDispatcher:
             scope["root_path"] = scope.get("root_path", "") + prefix
             remaining = path[prefix_len:]
             scope["path"] = remaining if remaining else "/"
-            http_app = server.mcp.http_app(transport="streamable-http")
-            http_app.redirect_slashes = False
+            http_app = server.get_http_app()
             await http_app(scope, receive, send)
 
         elif isinstance(server, MountableApp):
@@ -543,13 +558,26 @@ class ServerManager:
 
     def __init__(self, name: str = "service", lifespan: Callable | None = None):
         self.name = name
-        self.lifespan_ctx = lifespan
-        self.app = FastAPI(title=name, lifespan=lifespan)
+        self.user_lifespan_ctx = lifespan
+        self.lifespan_ctx = self._lifespan
+        self.app = FastAPI(title=name, lifespan=self._lifespan)
         self.cli = typer.Typer(name=name)
         self.mcp_servers: dict[str, FastMCP] = {}
         self.active_servers: dict[str, BaseServer] = {}
         self._add_infrastructure()
         self.app.mount("/", DynamicDispatcher(self))
+
+    @asynccontextmanager
+    async def _lifespan(self, app: FastAPI):
+        async with AsyncExitStack() as stack:
+            if self.user_lifespan_ctx:
+                await stack.enter_async_context(self.user_lifespan_ctx(app))
+
+            for server in self.active_servers.values():
+                if isinstance(server, StreamableHTTPMCPServer):
+                    await stack.enter_async_context(server.http_app_lifespan())
+
+            yield
 
     def add_server(self, server: BaseServer):
         """Register a polymorphic server instance.
