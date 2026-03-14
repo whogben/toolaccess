@@ -302,6 +302,10 @@ class StreamableHTTPMCPServer(BaseServer):
             self.mcp.tool(wrapped_func, name=tool.name, description=tool.description)
 
     def _wrap_for_mcp(self, tool: ToolDefinition) -> Callable:
+        """Wrap a tool for FastMCP; subclasses that override this must set the
+        returned wrapper's __module__ and __qualname__ from the original function
+        so Pydantic/FastMCP can resolve forward refs in the consumer's module.
+        """
         original_func = tool.func
         public_sig, public_annotations, context_param = get_public_signature(
             original_func
@@ -355,6 +359,13 @@ class StreamableHTTPMCPServer(BaseServer):
 
             async_wrapper.__signature__ = public_sig
             async_wrapper.__annotations__ = public_annotations
+            # So Pydantic/FastMCP resolve forward refs in the consumer's module (get_module_ns_of).
+            async_wrapper.__module__ = (
+                getattr(original_func, "__module__", None) or async_wrapper.__module__
+            )
+            async_wrapper.__qualname__ = getattr(
+                original_func, "__qualname__", getattr(original_func, "__name__", "unknown")
+            )
             return async_wrapper
         else:
 
@@ -374,6 +385,12 @@ class StreamableHTTPMCPServer(BaseServer):
 
             sync_wrapper.__signature__ = public_sig
             sync_wrapper.__annotations__ = public_annotations
+            sync_wrapper.__module__ = (
+                getattr(original_func, "__module__", None) or sync_wrapper.__module__
+            )
+            sync_wrapper.__qualname__ = getattr(
+                original_func, "__qualname__", getattr(original_func, "__name__", "unknown")
+            )
             return sync_wrapper
 
     def register_to(self, manager: "ServerManager"):
