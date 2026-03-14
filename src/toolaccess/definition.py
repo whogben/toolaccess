@@ -7,15 +7,30 @@ from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, Callable, Union, get_args, get_origin, get_type_hints
 
+from pydantic import BaseModel
+
+from .context import AccessPolicy, HttpMethod, InvocationContext, Surface, SurfaceSpec
 from .codecs import ArgumentCodec
-from .context import (
-    AccessPolicy,
-    HttpMethod,
-    InvocationContext,
-    Surface,
-    SurfaceSpec,
-)
 from .renderers import ResultRenderer
+
+
+def is_pydantic_model(annotation: Any) -> bool:
+    """Check if annotation is a pydantic BaseModel subclass (not instance)."""
+    annotation = _strip_annotated(annotation)
+    return inspect.isclass(annotation) and issubclass(annotation, BaseModel)
+
+
+def get_pydantic_model_params(func: Callable) -> dict[str, type[BaseModel]]:
+    """Inspect function signature and return dict mapping parameter names to pydantic model types."""
+    sig = inspect.signature(func)
+    hints = get_type_hints(func, include_extras=True)
+
+    result = {}
+    for param_name, param in sig.parameters.items():
+        hint = hints.get(param_name)
+        if hint is not None and is_pydantic_model(hint):
+            result[param_name] = hint
+    return result
 
 
 class InjectContext:
@@ -117,6 +132,8 @@ def _to_cli_safe_annotation(annotation: Any) -> Any:
     annotation = _strip_annotated(annotation)
     if annotation is inspect.Parameter.empty:
         return annotation
+    if is_pydantic_model(annotation):
+        return str
     if _is_typer_safe_annotation(annotation):
         return annotation
     if _is_optional_annotation(annotation):

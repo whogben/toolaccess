@@ -21,9 +21,11 @@ from .definition import (
     ToolDefinition,
     get_cli_signature,
     get_public_signature,
+    get_pydantic_model_params,
 )
 from .pipeline import invoke_tool
 from .renderers import ResultRenderer, PydanticJsonRenderer
+from .codecs import PydanticModelCodec
 
 """
 Generic Tool Server Utility (Polymorphic Server Model)
@@ -53,8 +55,33 @@ class ToolService:
     def _normalize_tool(self, tool: Callable | ToolDefinition) -> ToolDefinition:
         """Normalize a tool into a ToolDefinition instance."""
         if isinstance(tool, ToolDefinition):
-            return tool
-        return ToolDefinition(func=tool, name=tool.__name__)
+            return self._auto_add_pydantic_codecs(tool)
+        tool_def = ToolDefinition(func=tool, name=tool.__name__)
+        return self._auto_add_pydantic_codecs(tool_def)
+
+    def _auto_add_pydantic_codecs(self, tool_def: ToolDefinition) -> ToolDefinition:
+        """Automatically add PydanticModelCodec for pydantic model parameters that don't have a codec."""
+        if not tool_def.func:
+            return tool_def
+        
+        pydantic_params = get_pydantic_model_params(tool_def.func)
+        if not pydantic_params:
+            return tool_def
+        
+        codecs = dict(tool_def.codecs) if tool_def.codecs else {}
+        for param_name, model_class in pydantic_params.items():
+            if param_name not in codecs:
+                codecs[param_name] = PydanticModelCodec(model_class)
+        
+        return ToolDefinition(
+            func=tool_def.func,
+            name=tool_def.name,
+            description=tool_def.description,
+            surfaces=tool_def.surfaces,
+            access=tool_def.access,
+            codecs=codecs,
+            renderer=tool_def.renderer,
+        )
 
     def tool(
         self,
@@ -86,6 +113,7 @@ class ToolService:
                 codecs=codecs or {},
                 renderer=renderer,
             )
+            tool_def = self._auto_add_pydantic_codecs(tool_def)
             self.tools.append(tool_def)
             return func
 
