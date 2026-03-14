@@ -5,7 +5,6 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from typer.testing import CliRunner
 
 from toolaccess import (
     AccessPolicy,
@@ -23,11 +22,6 @@ from toolaccess import (
     get_public_signature,
 )
 from toolaccess.codecs import CsvListCodec, JsonObjectCodec
-
-
-@pytest.fixture
-def runner():
-    return CliRunner()
 
 
 class TestDecoratorAPI:

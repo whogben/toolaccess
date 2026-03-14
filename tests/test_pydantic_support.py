@@ -6,11 +6,9 @@ from typing import Optional
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
-from typer.testing import CliRunner
 
 from toolaccess import (
     CLIServer,
-    InvocationContext,
     OpenAPIServer,
     ServerManager,
     SurfaceSpec,
@@ -22,16 +20,6 @@ from toolaccess.definition import (
     get_pydantic_model_params,
     is_pydantic_model,
 )
-
-
-@pytest.fixture
-def mock_ctx():
-    return InvocationContext(surface="rest")
-
-
-@pytest.fixture
-def runner():
-    return CliRunner()
 
 
 class TestPydanticModelCodec:

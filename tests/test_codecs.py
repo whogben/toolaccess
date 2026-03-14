@@ -5,25 +5,18 @@ import json
 
 import pytest
 
-from toolaccess import InvocationContext
 from toolaccess.codecs import (
     Base64BytesCodec,
     CsvListCodec,
     IdentityCodec,
     JsonObjectCodec,
     JsonValueCodec,
-    PydanticModelCodec,
     base64_bytes_codec,
     csv_list_codec,
     identity_codec,
     json_object_codec,
     json_value_codec,
 )
-
-
-@pytest.fixture
-def mock_ctx():
-    return InvocationContext(surface="rest")
 
 
 class TestIdentityCodec:
@@ -195,67 +188,3 @@ class TestBase64BytesCodec:
 
     def test_singleton_instance(self):
         assert isinstance(base64_bytes_codec, Base64BytesCodec)
-
-
-class TestPydanticModelCodec:
-    def test_decode_json_string_to_pydantic_model(self, mock_ctx):
-        from pydantic import BaseModel
-
-        class TestModel(BaseModel):
-            name: str
-            value: int
-
-        codec = PydanticModelCodec(TestModel)
-        json_str = '{"name": "test", "value": 42}'
-        result = codec.decode(json_str, parameter_name="data", ctx=mock_ctx)
-        assert isinstance(result, TestModel)
-        assert result.name == "test"
-        assert result.value == 42
-
-    def test_decode_dict_to_pydantic_model(self, mock_ctx):
-        from pydantic import BaseModel
-
-        class TestModel(BaseModel):
-            name: str
-            value: int
-
-        codec = PydanticModelCodec(TestModel)
-        data = {"name": "test", "value": 42}
-        result = codec.decode(data, parameter_name="data", ctx=mock_ctx)
-        assert isinstance(result, TestModel)
-        assert result.name == "test"
-        assert result.value == 42
-
-    def test_passes_through_already_decoded_model(self, mock_ctx):
-        from pydantic import BaseModel
-
-        class TestModel(BaseModel):
-            name: str
-            value: int
-
-        codec = PydanticModelCodec(TestModel)
-        instance = TestModel(name="test", value=42)
-        result = codec.decode(instance, parameter_name="data", ctx=mock_ctx)
-        assert result is instance
-
-    def test_handles_none(self, mock_ctx):
-        from pydantic import BaseModel
-
-        class TestModel(BaseModel):
-            name: str
-            value: int
-
-        codec = PydanticModelCodec(TestModel)
-        result = codec.decode(None, parameter_name="data", ctx=mock_ctx)
-        assert result is None
-
-    def test_raises_value_error_for_invalid_json(self, mock_ctx):
-        from pydantic import BaseModel
-
-        class TestModel(BaseModel):
-            name: str
-            value: int
-
-        codec = PydanticModelCodec(TestModel)
-        with pytest.raises(ValueError):
-            codec.decode("not valid json", parameter_name="data", ctx=mock_ctx)

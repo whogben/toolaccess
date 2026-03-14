@@ -1,7 +1,6 @@
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from typer.testing import CliRunner
 from toolaccess import (
     CLIServer,
     MountableApp,
@@ -86,11 +85,6 @@ def manager():
 @pytest.fixture
 def client(manager):
     return TestClient(manager.app)
-
-
-@pytest.fixture
-def runner():
-    return CliRunner()
 
 
 def test_server_health(client):

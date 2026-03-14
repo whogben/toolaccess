@@ -2,21 +2,13 @@
 
 import json
 
-import pytest
-
 from pydantic import BaseModel
 
 from toolaccess import (
-    InvocationContext,
     JsonRenderer,
     NoOpRenderer,
     PydanticJsonRenderer,
 )
-
-
-@pytest.fixture
-def mock_ctx():
-    return InvocationContext(surface="rest")
 
 
 class TestNoOpRenderer:

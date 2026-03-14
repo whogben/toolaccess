@@ -22,11 +22,6 @@ from toolaccess.pipeline import (
 )
 
 
-@pytest.fixture
-def mock_ctx():
-    return InvocationContext(surface="rest")
-
-
 @pytest.mark.asyncio
 class TestResolvePrincipal:
     async def test_returns_existing_principal_when_no_resolvers(self):
