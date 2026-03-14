@@ -14,9 +14,30 @@ from .codecs import ArgumentCodec
 from .renderers import ResultRenderer
 
 
-def is_pydantic_model(annotation: Any) -> bool:
-    """Check if annotation is a pydantic BaseModel subclass (not instance)."""
+def _get_inner_model_type(annotation: Any) -> type[BaseModel] | None:
+    """Extract the inner pydantic model type from an annotation, handling Optional/Union."""
     annotation = _strip_annotated(annotation)
+    
+    # Handle Optional/Union
+    if _is_optional_annotation(annotation):
+        inner = _get_optional_inner_annotation(annotation)
+        if is_pydantic_model(inner):
+            return inner
+        return None
+    
+    if is_pydantic_model(annotation):
+        return annotation
+    
+    return None
+
+
+def is_pydantic_model(annotation: Any) -> bool:
+    """Check if annotation is a pydantic BaseModel subclass (not instance), including Optional."""
+    annotation = _strip_annotated(annotation)
+    # Handle Optional/Union - check if inner type is pydantic model
+    if _is_optional_annotation(annotation):
+        inner = _get_optional_inner_annotation(annotation)
+        return inspect.isclass(inner) and issubclass(inner, BaseModel)
     return inspect.isclass(annotation) and issubclass(annotation, BaseModel)
 
 
@@ -28,8 +49,11 @@ def get_pydantic_model_params(func: Callable) -> dict[str, type[BaseModel]]:
     result = {}
     for param_name, param in sig.parameters.items():
         hint = hints.get(param_name)
-        if hint is not None and is_pydantic_model(hint):
-            result[param_name] = hint
+        if hint is not None:
+            # Try to extract the inner model type, handling Optional/Union
+            model_type = _get_inner_model_type(hint)
+            if model_type is not None:
+                result[param_name] = model_type
     return result
 
 
@@ -132,6 +156,11 @@ def _to_cli_safe_annotation(annotation: Any) -> Any:
     annotation = _strip_annotated(annotation)
     if annotation is inspect.Parameter.empty:
         return annotation
+    # Handle Optional pydantic model - convert to str | None
+    if _is_optional_annotation(annotation):
+        inner = _get_optional_inner_annotation(annotation)
+        if is_pydantic_model(inner):
+            return str | None
     if is_pydantic_model(annotation):
         return str
     if _is_typer_safe_annotation(annotation):

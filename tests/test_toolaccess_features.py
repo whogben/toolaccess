@@ -1557,3 +1557,187 @@ class TestToolWithPydanticParamCli:
         assert parsed["name"] == "Alice"
         assert parsed["age"] == 25
 
+
+class TestOptionalPydanticParam:
+    def test_tool_with_optional_pydantic_param_via_rest(self):
+        """Test Optional[pydantic model] parameter via REST server."""
+        from typing import Optional
+        from fastapi.testclient import TestClient
+
+        mgr = ServerManager("test")
+
+        class UserInput(BaseModel):
+            name: str
+            age: int
+
+        def update_user(user: Optional[UserInput] = None) -> dict:
+            if user is None:
+                return {"updated": False}
+            return {"updated": True, "name": user.name, "age": user.age}
+
+        svc = ToolService(
+            "tools",
+            [ToolDefinition(func=update_user, name="update_user", surfaces={"rest": SurfaceSpec(http_method="POST")})],
+        )
+
+        api = OpenAPIServer("/api", "API")
+        api.mount(svc)
+        mgr.add_server(api)
+
+        client = TestClient(mgr.app)
+
+        response = client.post("/api/update_user", json={"name": "Bob", "age": 30})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["updated"] is True
+        assert data["name"] == "Bob"
+        assert data["age"] == 30
+
+    def test_tool_with_optional_pydantic_param_via_rest_null(self):
+        """Test Optional[pydantic model] parameter with null value via REST."""
+        from typing import Optional
+        from fastapi.testclient import TestClient
+
+        mgr = ServerManager("test")
+
+        class UserInput(BaseModel):
+            name: str
+
+        def update_user(user: Optional[UserInput] = None) -> dict:
+            if user is None:
+                return {"updated": False}
+            return {"updated": True, "name": user.name}
+
+        svc = ToolService(
+            "tools",
+            [ToolDefinition(func=update_user, name="update_user", surfaces={"rest": SurfaceSpec(http_method="POST")})],
+        )
+
+        api = OpenAPIServer("/api", "API")
+        api.mount(svc)
+        mgr.add_server(api)
+
+        client = TestClient(mgr.app)
+
+        response = client.post("/api/update_user", json=None)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["updated"] is False
+
+    def test_tool_with_optional_pydantic_param_via_cli(self, runner):
+        """Test Optional[pydantic model] parameter via CLI server."""
+        from typing import Optional
+
+        mgr = ServerManager("test")
+
+        class UserInput(BaseModel):
+            name: str
+            age: int
+
+        def update_user(user: UserInput) -> dict:
+            return {"updated": True, "name": user.name, "age": user.age}
+
+        svc = ToolService(
+            "tools",
+            [ToolDefinition(func=update_user, name="update_user")],
+        )
+
+        cli = CLIServer("tools")
+        cli.mount(svc)
+        mgr.add_server(cli)
+
+        result = runner.invoke(
+            mgr.cli, ["tools", "update_user", '{"name": "Charlie", "age": 35}']
+        )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output.strip())
+        assert parsed["updated"] is True
+        assert parsed["name"] == "Charlie"
+        assert parsed["age"] == 35
+
+    def test_tool_with_optional_pydantic_param_via_cli_null(self, runner):
+        """Test Optional[pydantic model] parameter with null via CLI."""
+        from typing import Optional
+
+        mgr = ServerManager("test")
+
+        class UserInput(BaseModel):
+            name: str
+
+        def update_user(user: Optional[UserInput] = None) -> dict:
+            if user is None:
+                return {"updated": False}
+            return {"updated": True, "name": user.name}
+
+        svc = ToolService(
+            "tools",
+            [ToolDefinition(func=update_user, name="update_user")],
+        )
+
+        cli = CLIServer("tools")
+        cli.mount(svc)
+        mgr.add_server(cli)
+
+        result = runner.invoke(mgr.cli, ["tools", "update_user"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output.strip())
+        assert parsed["updated"] is False
+
+    def test_tool_with_optional_pydantic_param_openapi_schema(self):
+        """Test that Optional[pydantic model] shows in OpenAPI schema."""
+        from typing import Optional
+
+        mgr = ServerManager("test")
+
+        class UserInput(BaseModel):
+            name: str = Field(description="The user's name")
+            age: int = Field(description="The user's age")
+
+        def update_user(user: Optional[UserInput] = None) -> dict:
+            return {"updated": user is not None}
+
+        svc = ToolService(
+            "tools",
+            [ToolDefinition(func=update_user, name="update_user", surfaces={"rest": SurfaceSpec(http_method="POST")})],
+        )
+
+        api = OpenAPIServer("/api", "API")
+        api.mount(svc)
+        mgr.add_server(api)
+
+        client = TestClient(mgr.app)
+        spec = client.get("/api/openapi.json").json()
+
+        schema = spec["components"]["schemas"].get("UserInput")
+        assert schema is not None
+        assert "properties" in schema
+        assert schema["properties"]["name"]["description"] == "The user's name"
+
+    def test_get_pydantic_model_params_with_optional(self):
+        """Test get_pydantic_model_params detects Optional pydantic models."""
+        from typing import Optional
+        from toolaccess.definition import get_pydantic_model_params
+
+        class UserInput(BaseModel):
+            name: str
+            age: int
+
+        def update_user(user: Optional[UserInput] = None) -> dict:
+            pass
+
+        params = get_pydantic_model_params(update_user)
+        assert "user" in params
+        assert params["user"] is UserInput
+
+    def test_is_pydantic_model_with_optional(self):
+        """Test is_pydantic_model detects Optional pydantic models."""
+        from typing import Optional
+        from toolaccess.definition import is_pydantic_model
+
+        class UserInput(BaseModel):
+            name: str
+
+        assert is_pydantic_model(Optional[UserInput]) is True
+        assert is_pydantic_model(UserInput) is True
+        assert is_pydantic_model(Optional[str]) is False
+
