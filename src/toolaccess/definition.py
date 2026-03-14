@@ -133,14 +133,30 @@ def get_public_signature(
 
 def get_cli_signature(
     func: Callable,
+    codecs: dict | None = None,
 ) -> tuple[inspect.Signature, dict[str, Any], str | None]:
-    """Return a Typer-safe signature for CLI registration."""
+    """Return a Typer-safe signature for CLI registration.
+    
+    Args:
+        func: The function to get the CLI signature for.
+        codecs: Optional dict of parameter name to ArgumentCodec. If a parameter has
+                a codec, it will be allowed even if the type would otherwise be
+                CLI-incompatible.
+    """
 
     public_sig, public_annotations, context_param_name = get_public_signature(func)
     cli_params = []
     cli_annotations: dict[str, Any] = {}
+    codecs = codecs or {}
 
     for param in public_sig.parameters.values():
+        # Check for CLI-incompatible types (only if no codec is provided)
+        if param.name not in codecs and _is_cli_incompatible_type(param.annotation):
+            raise ValueError(
+                f"Parameter '{param.name}' has type '{param.annotation}' which is not supported for CLI. "
+                f"Only pydantic models, Optional[pydantic models], and basic types (str, int, float, bool) are supported. "
+                f"Consider using a pydantic model, Optional[pydantic model], or providing a custom codec."
+            )
         cli_annotation = _to_cli_safe_annotation(param.annotation)
         cli_params.append(param.replace(annotation=cli_annotation))
         if cli_annotation is not inspect.Parameter.empty:
@@ -179,6 +195,32 @@ def _is_typer_safe_annotation(annotation: Any) -> bool:
         return True
 
     return inspect.isclass(base_annotation) and issubclass(base_annotation, Enum)
+
+
+def _is_cli_incompatible_type(annotation: Any) -> bool:
+    """Check if annotation is a type that can't be handled by CLI.
+    
+    Returns True for:
+    - Union types that aren't Optional (e.g., Union[User, str])
+    - Generic types that aren't handled (e.g., List[User])
+    """
+    annotation = _strip_annotated(annotation)
+    
+    # Check for Union that's not Optional
+    origin = get_origin(annotation)
+    if origin in (Union, types.UnionType):
+        args = get_args(annotation)
+        # If it's Optional (exactly 2 args with None), it's compatible
+        if len(args) == 2 and type(None) in args:
+            return False
+        # Otherwise it's an incompatible Union
+        return True
+    
+    # Check for other generic types (List, Dict, etc.) - not handled
+    if origin is not None:
+        return True
+    
+    return False
 
 
 def _is_optional_annotation(annotation: Any) -> bool:

@@ -138,6 +138,8 @@ service = ToolService("users", [create_user])
 
 For REST and MCP, the pydantic model schema (including descriptions) appears in the OpenAPI spec. For CLI, pass the model as a JSON string argument.
 
+**Note**: In Pydantic v2, field descriptions require `Field(description="...")`. Docstrings on fields are not automatically used.
+
 ### ToolService
 
 A named group of tools. Mount the same service onto multiple servers to keep them in sync:

@@ -420,7 +420,7 @@ class CLIServer(BaseServer):
 
     def _add_command(self, app: typer.Typer, tool: ToolDefinition):
         original_func = tool.func
-        cli_sig, cli_annotations, context_param = get_cli_signature(original_func)
+        cli_sig, cli_annotations, context_param = get_cli_signature(original_func, tool.codecs)
 
         async def _run_tool(kwargs: dict) -> Any:
             ctx = InvocationContext(
