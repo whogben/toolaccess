@@ -4,6 +4,8 @@ import base64
 import json
 from typing import Any, Protocol, runtime_checkable
 
+from pydantic import BaseModel, ValidationError
+
 from .context import InvocationContext
 
 
@@ -79,9 +81,36 @@ class Base64BytesCodec:
         )
 
 
+class PydanticModelCodec:
+    def __init__(self, model: type[BaseModel]):
+        self.model = model
+
+    def decode(
+        self, value: Any, *, parameter_name: str, ctx: InvocationContext
+    ) -> BaseModel:
+        if value is None:
+            return None
+        if isinstance(value, self.model):
+            return value
+        try:
+            if isinstance(value, dict):
+                return self.model(**value)
+            if isinstance(value, str):
+                return self.model.model_validate_json(value)
+        except ValidationError as e:
+            raise ValueError(
+                f"Validation error for '{parameter_name}': {e.errors()}"
+            ) from e
+        raise ValueError(
+            f"Expected {self.model.__name__}, dict, JSON string, or None for '{parameter_name}', "
+            f"got {type(value).__name__}"
+        )
+
+
 # Singleton instances for convenience
 identity_codec = IdentityCodec()
 json_object_codec = JsonObjectCodec()
 json_value_codec = JsonValueCodec()
 csv_list_codec = CsvListCodec()
 base64_bytes_codec = Base64BytesCodec()
+pydantic_model_codec: PydanticModelCodec | None = None

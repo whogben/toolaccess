@@ -7,15 +7,54 @@ from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, Callable, Union, get_args, get_origin, get_type_hints
 
+from pydantic import BaseModel
+
+from .context import AccessPolicy, HttpMethod, InvocationContext, Surface, SurfaceSpec
 from .codecs import ArgumentCodec
-from .context import (
-    AccessPolicy,
-    HttpMethod,
-    InvocationContext,
-    Surface,
-    SurfaceSpec,
-)
 from .renderers import ResultRenderer
+
+
+def _get_inner_model_type(annotation: Any) -> type[BaseModel] | None:
+    """Extract the inner pydantic model type from an annotation, handling Optional/Union."""
+    annotation = _strip_annotated(annotation)
+    
+    # Handle Optional/Union
+    if _is_optional_annotation(annotation):
+        inner = _get_optional_inner_annotation(annotation)
+        if is_pydantic_model(inner):
+            return inner
+        return None
+    
+    if is_pydantic_model(annotation):
+        return annotation
+    
+    return None
+
+
+def is_pydantic_model(annotation: Any) -> bool:
+    """Check if annotation is a pydantic BaseModel subclass (not instance), including Optional."""
+    annotation = _strip_annotated(annotation)
+    # Handle Optional/Union - check if inner type is pydantic model
+    if _is_optional_annotation(annotation):
+        inner = _get_optional_inner_annotation(annotation)
+        return inspect.isclass(inner) and issubclass(inner, BaseModel)
+    return inspect.isclass(annotation) and issubclass(annotation, BaseModel)
+
+
+def get_pydantic_model_params(func: Callable) -> dict[str, type[BaseModel]]:
+    """Inspect function signature and return dict mapping parameter names to pydantic model types."""
+    sig = inspect.signature(func)
+    hints = get_type_hints(func, include_extras=True)
+
+    result = {}
+    for param_name, param in sig.parameters.items():
+        hint = hints.get(param_name)
+        if hint is not None:
+            # Try to extract the inner model type, handling Optional/Union
+            model_type = _get_inner_model_type(hint)
+            if model_type is not None:
+                result[param_name] = model_type
+    return result
 
 
 class InjectContext:
@@ -94,14 +133,30 @@ def get_public_signature(
 
 def get_cli_signature(
     func: Callable,
+    codecs: dict | None = None,
 ) -> tuple[inspect.Signature, dict[str, Any], str | None]:
-    """Return a Typer-safe signature for CLI registration."""
+    """Return a Typer-safe signature for CLI registration.
+    
+    Args:
+        func: The function to get the CLI signature for.
+        codecs: Optional dict of parameter name to ArgumentCodec. If a parameter has
+                a codec, it will be allowed even if the type would otherwise be
+                CLI-incompatible.
+    """
 
     public_sig, public_annotations, context_param_name = get_public_signature(func)
     cli_params = []
     cli_annotations: dict[str, Any] = {}
+    codecs = codecs or {}
 
     for param in public_sig.parameters.values():
+        # Check for CLI-incompatible types (only if no codec is provided)
+        if param.name not in codecs and _is_cli_incompatible_type(param.annotation):
+            raise ValueError(
+                f"Parameter '{param.name}' has type '{param.annotation}' which is not supported for CLI. "
+                f"Only pydantic models, Optional[pydantic models], and basic types (str, int, float, bool) are supported. "
+                f"Consider using a pydantic model, Optional[pydantic model], or providing a custom codec."
+            )
         cli_annotation = _to_cli_safe_annotation(param.annotation)
         cli_params.append(param.replace(annotation=cli_annotation))
         if cli_annotation is not inspect.Parameter.empty:
@@ -117,6 +172,13 @@ def _to_cli_safe_annotation(annotation: Any) -> Any:
     annotation = _strip_annotated(annotation)
     if annotation is inspect.Parameter.empty:
         return annotation
+    # Handle Optional pydantic model - convert to str | None
+    if _is_optional_annotation(annotation):
+        inner = _get_optional_inner_annotation(annotation)
+        if is_pydantic_model(inner):
+            return str | None
+    if is_pydantic_model(annotation):
+        return str
     if _is_typer_safe_annotation(annotation):
         return annotation
     if _is_optional_annotation(annotation):
@@ -133,6 +195,32 @@ def _is_typer_safe_annotation(annotation: Any) -> bool:
         return True
 
     return inspect.isclass(base_annotation) and issubclass(base_annotation, Enum)
+
+
+def _is_cli_incompatible_type(annotation: Any) -> bool:
+    """Check if annotation is a type that can't be handled by CLI.
+    
+    Returns True for:
+    - Union types that aren't Optional (e.g., Union[User, str])
+    - Generic types that aren't handled (e.g., List[User])
+    """
+    annotation = _strip_annotated(annotation)
+    
+    # Check for Union that's not Optional
+    origin = get_origin(annotation)
+    if origin in (Union, types.UnionType):
+        args = get_args(annotation)
+        # If it's Optional (exactly 2 args with None), it's compatible
+        if len(args) == 2 and type(None) in args:
+            return False
+        # Otherwise it's an incompatible Union
+        return True
+    
+    # Check for other generic types (List, Dict, etc.) - not handled
+    if origin is not None:
+        return True
+    
+    return False
 
 
 def _is_optional_annotation(annotation: Any) -> bool:

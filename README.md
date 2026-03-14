@@ -111,6 +111,35 @@ ToolDefinition(
 )
 ```
 
+### Pydantic Model Parameters
+
+You can use pydantic models as tool parameters to get rich type information in your OpenAPI and MCP specs. The library automatically handles encoding/decoding across all surfaces:
+
+```python
+from pydantic import BaseModel, Field
+from toolaccess import ServerManager, ToolService, ToolDefinition, OpenAPIServer, CLIServer
+
+class UserInput(BaseModel):
+    name: str = Field(description="The user's full name")
+    age: int = Field(description="The user's age")
+
+def create_user(user: UserInput) -> dict:
+    """Create a new user."""
+    return {"created": True, "name": user.name, "age": user.age}
+
+service = ToolService("users", [create_user])
+
+# REST - pass as JSON body
+# POST /api/create_user {"name": "Alice", "age": 30}
+
+# CLI - pass as JSON string
+# python app.py users create_user '{"name": "Alice", "age": 30}'
+```
+
+For REST and MCP, the pydantic model schema (including descriptions) appears in the OpenAPI spec. For CLI, pass the model as a JSON string argument.
+
+**Note**: In Pydantic v2, field descriptions require `Field(description="...")`. Docstrings on fields are not automatically used.
+
 ### ToolService
 
 A named group of tools. Mount the same service onto multiple servers to keep them in sync:
